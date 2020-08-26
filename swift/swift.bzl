@@ -41,6 +41,7 @@ load(
 load(
     "@build_bazel_rules_swift//swift/internal:swift_grpc_library.bzl",
     _swift_grpc_library = "swift_grpc_library",
+    _swift_grpc_code = "swift_grpc_code",
 )
 load(
     "@build_bazel_rules_swift//swift/internal:swift_import.bzl",
@@ -57,6 +58,7 @@ load(
 load(
     "@build_bazel_rules_swift//swift/internal:swift_proto_library.bzl",
     _swift_proto_library = "swift_proto_library",
+    _swift_proto_code = "swift_proto_code",
 )
 load(
     "@build_bazel_rules_swift//swift/internal:swift_usage_aspect.bzl",
@@ -76,11 +78,13 @@ swift_common = _swift_common
 swift_binary = _swift_binary
 swift_c_module = _swift_c_module
 swift_grpc_library = _swift_grpc_library
+swift_grpc_code = _swift_grpc_code
 swift_import = _swift_import
 swift_library = _swift_library
 swift_test = _swift_test
 swift_module_alias = _swift_module_alias
 swift_proto_library = _swift_proto_library
+swift_proto_code = _swift_proto_code
 
 # Re-export public aspects.
 swift_usage_aspect = _swift_usage_aspect
