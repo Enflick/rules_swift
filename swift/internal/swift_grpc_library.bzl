@@ -131,6 +131,9 @@ def _register_grpcswift_generate_action(
     elif flavor == "server":
         protoc_args.add("--swiftgrpc_opt=Client=false")
         protoc_args.add("--swiftgrpc_opt=Server=true")
+    elif flavor == "client_server":
+        protoc_args.add("--swiftgrpc_opt=Client=true")
+        protoc_args.add("--swiftgrpc_opt=Server=true")
     else:
         fail("Unsupported swift_grpc_library flavor", attr = "flavor")
     protoc_args.add_all(
@@ -532,6 +535,7 @@ on the `swift_grpc_library` implementing the service.
                     "client",
                     "client_stubs",
                     "server",
+                    "client_server",
                 ],
                 mandatory = True,
                 doc = """\
@@ -540,6 +544,7 @@ The kind of definitions that should be generated:
 *   `"client"` to generate client definitions.
 *   `"client_stubs"` to generate client test stubs.
 *   `"server"` to generate server definitions.
+*   `"client_server"` to generate both client and server definitions.
 """,
             ),
             "proto_visibility": attr.string(
