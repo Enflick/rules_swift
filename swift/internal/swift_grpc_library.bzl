@@ -137,7 +137,7 @@ def _register_grpcswift_generate_action(
         extra_module_imports,
         format_each = "--swiftgrpc_opt=ExtraModuleImports=%s",
     )
-    if module_mapping_file:
+    if module_mapping_file and proto_visibility != "Internal":
         protoc_args.add(
             module_mapping_file,
             format = "--swiftgrpc_opt=ProtoPathModuleMappings=%s",
