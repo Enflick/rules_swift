@@ -110,6 +110,7 @@ def _register_pbswift_generate_action(
         transitive_descriptor_sets,
         module_mapping_file,
         mkdir_and_run,
+        proto_visibility,
         protoc_executable,
         protoc_plugin_executable):
     """Registers actions that generate `.pb.swift` files from `.proto` files.
@@ -128,6 +129,7 @@ def _register_pbswift_generate_action(
             mapping will be passed (the case for leaf nodes in the dependency
             graph).
         mkdir_and_run: The `File` representing the `mkdir_and_run` executable.
+        proto_visibility: Whether the generated code should have access control set to Public or Internal.
         protoc_executable: The `File` representing the `protoc` executable.
         protoc_plugin_executable: The `File` representing the `protoc` plugin
             executable.
@@ -169,7 +171,11 @@ def _register_pbswift_generate_action(
     )
     protoc_args.add(generated_dir_path, format = "--swift_out=%s")
     protoc_args.add("--swift_opt=FileNaming=FullPath")
-    protoc_args.add("--swift_opt=Visibility=Public")
+    if proto_visibility == "Internal":
+        protoc_args.add("--swift_opt=Visibility=Internal")
+    else:
+        protoc_args.add("--swift_opt=Visibility=Public")
+
     if module_mapping_file:
         protoc_args.add(
             module_mapping_file,
@@ -343,6 +349,7 @@ def _swift_protoc_gen_aspect_impl(target, aspect_ctx):
             transitive_descriptor_sets,
             transitive_module_mapping_file,
             aspect_ctx.executable._mkdir_and_run,
+            "Public", # stay compatible with upstream
             aspect_ctx.executable._protoc,
             aspect_ctx.executable._protoc_gen_swift,
         )
@@ -609,4 +616,132 @@ detail of the `swift_proto_library` rule.
 """,
     fragments = ["cpp"],
     implementation = _swift_protoc_gen_aspect_impl,
+)
+
+def _swift_protoc_gen_code_aspect_impl(target, aspect_ctx):
+    direct_srcs = _filter_out_well_known_types(
+        target[ProtoInfo].direct_sources,
+        target[ProtoInfo].proto_source_root,
+    )
+
+    # Direct sources are passed as arguments to protoc to generate *only* the
+    # files in this target, but we need to pass the transitive sources as inputs
+    # to the generating action so that all the dependent files are available for
+    # protoc to parse.
+    # Instead of providing all those files and opening/reading them, we use
+    # protoc's support for reading descriptor sets to resolve things.
+    transitive_descriptor_sets = target[ProtoInfo].transitive_descriptor_sets
+    proto_deps = [
+        dep
+        for dep in aspect_ctx.rule.attr.deps
+        if SwiftProtoInfo in dep
+    ]
+
+    minimal_module_mappings = []
+    if direct_srcs:
+        minimal_module_mappings.append(
+            _build_module_mapping_from_srcs(
+                target,
+                direct_srcs,
+                target[ProtoInfo].proto_source_root,
+            ),
+        )
+    if proto_deps:
+        minimal_module_mappings.extend(
+            _gather_transitive_module_mappings(proto_deps),
+        )
+
+    transitive_module_mapping_file = register_module_mapping_write_action(
+        target.label.name,
+        aspect_ctx.actions,
+        minimal_module_mappings,
+    )
+
+    support_deps = aspect_ctx.attr._proto_support
+
+    if direct_srcs:
+        # Generate the Swift sources from the .proto files.
+        pbswift_files = _register_pbswift_generate_action(
+            target.label,
+            aspect_ctx.actions,
+            direct_srcs,
+            target[ProtoInfo].proto_source_root,
+            transitive_descriptor_sets,
+            transitive_module_mapping_file,
+            aspect_ctx.executable._mkdir_and_run,
+            aspect_ctx.attr.proto_visibility,
+            aspect_ctx.executable._protoc,
+            aspect_ctx.executable._protoc_gen_swift,
+        )
+
+        providers = [
+            swift_common.create_swift_info(
+                swift_infos = get_providers(
+                    proto_deps + support_deps,
+                    SwiftInfo,
+                ),
+            ),
+        ]
+    else:
+        pbswift_files = []
+
+        providers = [
+            swift_common.create_swift_info(
+                swift_infos = get_providers(proto_deps, SwiftInfo),
+            ),
+        ]
+
+    providers.append(_build_swift_proto_info_provider(
+        pbswift_files,
+        minimal_module_mappings,
+        proto_deps,
+    ))
+
+    return providers
+
+swift_protoc_gen_code_aspect = aspect(
+    attr_aspects = ["deps"],
+    attrs = dicts.add(
+        swift_common.toolchain_attrs(),
+        swift_config_attrs(),
+        {
+            "proto_visibility": attr.string(values=["Public","Internal"]),
+            "_mkdir_and_run": attr.label(
+                cfg = "host",
+                default = Label(
+                    "@build_bazel_rules_swift//tools/mkdir_and_run",
+                ),
+                executable = True,
+            ),
+            # TODO(b/63389580): Migrate to proto_lang_toolchain.
+            "_proto_support": attr.label_list(
+                default = [
+                    Label("@com_github_apple_swift_protobuf//:SwiftProtobuf"),
+                ],
+            ),
+            "_protoc": attr.label(
+                cfg = "host",
+                default = Label("@com_google_protobuf//:protoc"),
+                executable = True,
+            ),
+            "_protoc_gen_swift": attr.label(
+                cfg = "host",
+                default = Label("@com_github_apple_swift_protobuf//:ProtoCompilerPlugin"),
+                executable = True,
+            ),
+        },
+    ),
+    doc = """\
+Generates Swift artifacts for a `proto_library` target.
+
+For each `proto_library` (more specifically, any target that propagates a
+`proto` provider) to which this aspect is applied, the aspect will register
+actions that generate Swift files and propagate them in a `SwiftProtoInfo`
+provider.
+
+Most users should not need to use this aspect directly; it is an implementation
+detail of the `swift_proto_code` rule.
+""",
+    fragments = ["cpp"],
+    implementation = _swift_protoc_gen_code_aspect_impl,
 )

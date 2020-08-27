@@ -20,6 +20,7 @@ load(
     ":swift_protoc_gen_aspect.bzl",
     "SwiftProtoCcInfo",
     "swift_protoc_gen_aspect",
+    "swift_protoc_gen_code_aspect",
 )
 
 def _swift_proto_library_impl(ctx):
@@ -156,4 +157,65 @@ statement(s) will speed up downstream Swift compilation actions, because it
 prevents unused modules from being loaded by `swiftc`.
 """,
     implementation = _swift_proto_library_impl,
+)
+
+def _swift_proto_code_impl(ctx):
+    if len(ctx.attr.deps) != 1:
+        fail(
+            "You must list exactly one target in the deps attribute.",
+            attr = "deps",
+        )
+
+    dep = ctx.attr.deps[0]
+    swift_info = dep[SwiftInfo]
+    swift_proto_info = dep[SwiftProtoInfo]
+
+    providers = [
+        # Return the generated sources as the default outputs if the user builds
+        # this target standalone (along with the direct .swiftmodules, to force
+        # compilation). This lets users easily inspect those sources to
+        # determine the interfaces of the generated protos, which have
+        # previously been a bit difficult to find.
+        DefaultInfo(
+            files = depset(
+                transitive = [swift_proto_info.pbswift_files],
+            ),
+        ),
+        # Repropagate the Swift* providers that the aspect attached to
+        # the `proto_library` dependency so that the modules and link libraries
+        # are passed through correctly.
+        swift_info,
+        # Repropagate the `SwiftProtoInfo` provider so that downstream
+        # rules/aspects can access the sources if necessary. (This should
+        # typically only be used for IDE support.)
+        swift_proto_info,
+    ]
+
+    return providers
+
+swift_proto_code = rule(
+    attrs = {
+        "deps": attr.label_list(
+            aspects = [swift_protoc_gen_code_aspect],
+            doc = """\
+Exactly one `proto_library` target (or any target that propagates a `proto`
+provider) from which the Swift library should be generated.
+""",
+            providers = [ProtoInfo],
+        ),
+        "proto_visibility": attr.string(
+            values = [
+                "Public",
+                "Internal",
+            ],
+            default = "Public",
+            doc = """
+Whether the generated code should have access control set to Public or Internal
+""",
+        ),
+    },
+    doc = """\
+Generates Swift files from protocol buffer sources.
+""",
+    implementation = _swift_proto_code_impl,
 )

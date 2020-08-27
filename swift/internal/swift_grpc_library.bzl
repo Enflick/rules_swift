@@ -54,6 +54,7 @@ def _register_grpcswift_generate_action(
         protoc_executable,
         protoc_plugin_executable,
         flavor,
+        proto_visibility,
         extra_module_imports):
     """Registers actions to generate `.grpc.swift` files from `.proto` files.
 
@@ -75,6 +76,7 @@ def _register_grpcswift_generate_action(
         protoc_plugin_executable: The `File` representing the `protoc` plugin
             executable.
         flavor: The library flavor to generate.
+        proto_visibility: Whether the generated code should have access control set to Public or Internal.
         extra_module_imports: Additional modules to import.
 
     Returns:
@@ -113,7 +115,11 @@ def _register_grpcswift_generate_action(
         format = "--plugin=protoc-gen-swiftgrpc=%s",
     )
     protoc_args.add(generated_dir_path, format = "--swiftgrpc_out=%s")
-    protoc_args.add("--swiftgrpc_opt=Visibility=Public")
+    if proto_visibility == "Internal":
+        protoc_args.add("--swiftgrpc_opt=Visibility=Internal")
+    else:
+        protoc_args.add("--swiftgrpc_opt=Visibility=Public")
+
     if flavor == "client":
         protoc_args.add("--swiftgrpc_opt=Client=true")
         protoc_args.add("--swiftgrpc_opt=Server=false")
@@ -217,6 +223,7 @@ def _swift_grpc_library_impl(ctx):
         ctx.executable._protoc,
         ctx.executable._protoc_gen_swiftgrpc,
         ctx.attr.flavor,
+        "Public", # stay compatible with upstream
         extra_module_imports,
     )
 
@@ -440,4 +447,139 @@ swift_grpc_library(
 """,
     fragments = ["cpp"],
     implementation = _swift_grpc_library_impl,
+)
+
+def _swift_grpc_code_impl(ctx):
+    if len(ctx.attr.deps) != 1:
+        fail(
+            "You must list exactly one target in the deps attribute.",
+            attr = "deps",
+        )
+    if len(ctx.attr.srcs) != 1:
+        fail(
+            "You must list exactly one target in the srcs attribute.",
+            attr = "srcs",
+        )
+
+    # Direct sources are passed as arguments to protoc to generate *only* the
+    # files in this target, but we need to pass the transitive sources as inputs
+    # to the generating action so that all the dependent files are available for
+    # protoc to parse.
+    # Instead of providing all those files and opening/reading them, we use
+    # protoc's support for reading descriptor sets to resolve things.
+    direct_srcs = ctx.attr.srcs[0][ProtoInfo].direct_sources
+    transitive_descriptor_sets = (
+        ctx.attr.srcs[0][ProtoInfo].transitive_descriptor_sets
+    )
+    deps = ctx.attr.deps
+
+    minimal_module_mappings = deps[0][SwiftProtoInfo].module_mappings
+    transitive_module_mapping_file = register_module_mapping_write_action(
+        ctx.label.name,
+        ctx.actions,
+        minimal_module_mappings,
+    )
+
+    extra_module_imports = []
+    if ctx.attr.flavor == "client_stubs":
+        extra_module_imports.append(swift_common.derive_module_name(deps[0].label))
+
+    # Generate the Swift sources from the .proto files.
+    generated_files = _register_grpcswift_generate_action(
+        ctx.label,
+        ctx.actions,
+        direct_srcs,
+        ctx.attr.srcs[0][ProtoInfo].proto_source_root,
+        transitive_descriptor_sets,
+        transitive_module_mapping_file,
+        ctx.executable._mkdir_and_run,
+        ctx.executable._protoc,
+        ctx.executable._protoc_gen_swiftgrpc,
+        ctx.attr.flavor,
+        ctx.attr.proto_visibility,
+        extra_module_imports,
+    )
+
+    providers = [
+        DefaultInfo(
+            files = depset(direct = generated_files)
+        ),
+        deps[0][SwiftProtoInfo],
+    ]
+
+    return providers
+
+swift_grpc_code = rule(
+    attrs = dicts.add(
+        swift_common.toolchain_attrs(),
+        {
+            "srcs": attr.label_list(
+                doc = """\
+Exactly one `proto_library` target that defines the services being generated.
+""",
+                providers = [ProtoInfo],
+            ),
+            "deps": attr.label_list(
+                doc = """\
+Exactly one `swift_proto_library`, `swift_gprc_generate`, or `swift_grpc_library` target that contains
+the Swift protos used by the services being generated. Test stubs should depend
+on the `swift_grpc_library` implementing the service.
+""",
+                providers = [[SwiftInfo, SwiftProtoInfo]],
+            ),
+            "flavor": attr.string(
+                values = [
+                    "client",
+                    "client_stubs",
+                    "server",
+                ],
+                mandatory = True,
+                doc = """\
+The kind of definitions that should be generated:
+
+*   `"client"` to generate client definitions.
+*   `"client_stubs"` to generate client test stubs.
+*   `"server"` to generate server definitions.
+""",
+            ),
+            "proto_visibility": attr.string(
+                values = [
+                    "Public",
+                    "Internal",
+                ],
+                default = "Public",
+                doc = """
+Whether the gRPC proto should be generated as Public or Internal
+""",
+            ),
+            "_mkdir_and_run": attr.label(
+                cfg = "host",
+                default = Label(
+                    "@build_bazel_rules_swift//tools/mkdir_and_run",
+                ),
+                executable = True,
+            ),
+            "_protoc": attr.label(
+                cfg = "host",
+                default = Label(
+                    "@com_google_protobuf//:protoc",
+                ),
+                executable = True,
+            ),
+            "_protoc_gen_swiftgrpc": attr.label(
+                cfg = "host",
+                default = Label(
+                    "@com_github_grpc_grpc_swift//:protoc-gen-swiftgrpc",
+                ),
+                executable = True,
+            ),
+        },
+    ),
+    doc = """\
+Generates a Swift files from gRPC services defined in protocol buffer sources.
+
+There's a new `proto_visibility` option, but otherwise the options are the same as
+`swift_grpc_library`, except no library is built.
+""",
+    implementation = _swift_grpc_code_impl,
 )
