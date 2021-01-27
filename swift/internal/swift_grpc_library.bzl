@@ -140,11 +140,11 @@ def _register_grpcswift_generate_action(
         extra_module_imports,
         format_each = "--swiftgrpc_opt=ExtraModuleImports=%s",
     )
-    if module_mapping_file and proto_visibility != "Internal":
-        protoc_args.add(
-            module_mapping_file,
-            format = "--swiftgrpc_opt=ProtoPathModuleMappings=%s",
-        )
+    #if module_mapping_file and proto_visibility != "Internal":
+    #    protoc_args.add(
+    #        module_mapping_file,
+    #        format = "--swiftgrpc_opt=ProtoPathModuleMappings=%s",
+    #    )
     protoc_args.add("--descriptor_set_in")
     protoc_args.add_joined(transitive_descriptor_sets, join_with = ":")
     protoc_args.add_all([

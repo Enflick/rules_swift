@@ -176,11 +176,11 @@ def _register_pbswift_generate_action(
     else:
         protoc_args.add("--swift_opt=Visibility=Public")
 
-    if module_mapping_file and proto_visibility != "Internal":
-        protoc_args.add(
-            module_mapping_file,
-            format = "--swift_opt=ProtoPathModuleMappings=%s",
-        )
+    #if module_mapping_file and proto_visibility != "Internal":
+    #    protoc_args.add(
+    #        module_mapping_file,
+    #        format = "--swift_opt=ProtoPathModuleMappings=%s",
+    #    )
     protoc_args.add("--descriptor_set_in")
     protoc_args.add_joined(transitive_descriptor_sets, join_with = ":")
     protoc_args.add_all(
